@@ -1,0 +1,46 @@
+name: Auto Post to X
+
+on:
+  schedule:
+    # 毎日 21:00 JST (12:00 UTC) に実行
+    - cron: "0 12 * * *"
+  workflow_dispatch: {} # 手動実行用ボタン
+
+permissions:
+  contents: write # posted.json をコミットするために必要
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run poster script
+        env:
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: python post_tweet.py
+
+      - name: Commit posted.json if changed
+        run: |
+          if git diff --quiet posted.json; then
+            echo "変更なし、コミットをスキップします。"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add posted.json
+            git commit -m "chore: update posted.json"
+            git push
+          fi
