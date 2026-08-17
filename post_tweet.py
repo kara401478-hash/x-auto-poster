@@ -1,29 +1,34 @@
 """
-x-auto-poster
+x-auto-poster (通知版)
 ブログ(はてなブログ)のRSSフィードから新着記事を検知し、
-Groq APIでツイート文を生成してXに自動投稿するスクリプト。
+Groq APIでツイート文案を生成して、メールで通知するスクリプト。
+(X APIのPay-Per-Use課金・クレカ登録を避けるため、直接投稿はせず
+ 「文案をメールで送る→手動でXに貼る」運用に変更したバージョン)
 
 処理の流れ:
 1. RSSフィードを取得
-2. posted.json (投稿済みURLリスト) と比較して未投稿の記事を抽出
-3. 未投稿記事があれば、Groq APIで140字以内のツイート文を生成
-4. tweepyでXに投稿
+2. posted.json (通知済みURLリスト) と比較して未通知の記事を抽出
+3. 未通知記事があれば、Groq APIで100字以内のツイート文案を生成
+4. Gmail SMTPでメール通知(件名・本文にツイート文案+記事リンク)
 5. posted.json を更新(コミットはワークフロー側で実施)
 """
 
 import json
 import os
+import smtplib
 import sys
+from email.mime.text import MIMEText
 from pathlib import Path
 
 import feedparser
-import tweepy
 from groq import Groq
 
 # ---- 設定 ----
 RSS_URL = "https://nisa-sp500.hatenablog.com/rss"
 POSTED_FILE = Path(__file__).parent / "posted.json"
-MAX_NEW_POSTS_PER_RUN = 3  # 1回の実行で投稿する最大件数(まとめて投下して垢BANされないよう制限)
+MAX_NEW_NOTICES_PER_RUN = 3  # 1回の実行で通知する最大件数
+SMTP_HOST = "smtp.gmail.com"
+SMTP_PORT = 587
 
 
 def load_posted() -> set:
@@ -59,8 +64,8 @@ def fetch_new_entries(posted: set):
     return new_entries
 
 
-def generate_tweet_text(title: str, link: str) -> str:
-    """Groq APIでツイート文を生成。失敗時はシンプルなフォールバック文を返す。"""
+def generate_tweet_draft(title: str, link: str) -> str:
+    """Groq APIでツイート文案を生成。失敗時はシンプルなフォールバック文を返す。"""
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
         return f"【新着記事】{title} {link}"
@@ -93,14 +98,28 @@ def generate_tweet_text(title: str, link: str) -> str:
         return f"【新着記事】{title} {link}"
 
 
-def post_to_x(text: str) -> None:
-    client = tweepy.Client(
-        consumer_key=os.environ["X_API_KEY"],
-        consumer_secret=os.environ["X_API_SECRET"],
-        access_token=os.environ["X_ACCESS_TOKEN"],
-        access_token_secret=os.environ["X_ACCESS_TOKEN_SECRET"],
-    )
-    client.create_tweet(text=text)
+def send_notification_email(entries_with_drafts: list) -> None:
+    """新着記事+ツイート文案をまとめて1通のメールで通知する。"""
+    sender = os.environ["GMAIL_ADDRESS"]
+    app_password = os.environ["GMAIL_APP_PASSWORD"]
+    recipient = os.environ["NOTIFY_EMAIL_TO"]
+
+    lines = []
+    for item in entries_with_drafts:
+        lines.append(f"■ {item['title']}")
+        lines.append(f"文案:\n{item['draft']}")
+        lines.append("---")
+    body = "\n\n".join(lines)
+
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["Subject"] = f"【ブログ新着】Xへ投稿する記事が{len(entries_with_drafts)}件あります"
+    msg["From"] = sender
+    msg["To"] = recipient
+
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+        server.starttls()
+        server.login(sender, app_password)
+        server.send_message(msg)
 
 
 def main():
@@ -111,18 +130,23 @@ def main():
         print("新着記事はありませんでした。")
         return
 
-    targets = new_entries[:MAX_NEW_POSTS_PER_RUN]
-    print(f"{len(targets)}件の新着記事を投稿します。")
+    targets = new_entries[:MAX_NEW_NOTICES_PER_RUN]
+    print(f"{len(targets)}件の新着記事を通知します。")
 
+    entries_with_drafts = []
     for entry in targets:
-        text = generate_tweet_text(entry["title"], entry["link"])
-        try:
-            post_to_x(text)
-            print(f"投稿成功: {entry['title']}")
+        draft = generate_tweet_draft(entry["title"], entry["link"])
+        entries_with_drafts.append({"title": entry["title"], "link": entry["link"], "draft": draft})
+
+    try:
+        send_notification_email(entries_with_drafts)
+        print("メール通知に成功しました。")
+        for entry in targets:
             posted.add(entry["link"])
-        except Exception as e:
-            print(f"投稿失敗: {entry['title']} / {e}", file=sys.stderr)
-            # 失敗した記事は posted に追加しない(次回リトライ対象にする)
+    except Exception as e:
+        print(f"メール通知に失敗しました: {e}", file=sys.stderr)
+        # 失敗時は posted に追加しない(次回リトライ対象にする)
+        return
 
     save_posted(posted)
 
