@@ -68,7 +68,7 @@ def generate_tweet_draft(title: str, link: str) -> str:
     """Groq APIでツイート文案を生成。失敗時はシンプルなフォールバック文を返す。"""
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
-        return f"【新着記事】{title} {link}"
+        return f"[Groq未設定のためタイトルをそのまま使用]\n{title} {link}"
 
     try:
         client = Groq(api_key=api_key)
@@ -83,7 +83,7 @@ def generate_tweet_draft(title: str, link: str) -> str:
             f"記事タイトル: {title}"
         )
         resp = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-120b",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=200,
             temperature=0.7,
@@ -95,7 +95,7 @@ def generate_tweet_draft(title: str, link: str) -> str:
         return f"{body}\n{link}"
     except Exception as e:
         print(f"Groq生成に失敗、フォールバック文を使用します: {e}", file=sys.stderr)
-        return f"【新着記事】{title} {link}"
+        return f"[Groq生成失敗: {e}]\n{title} {link}"
 
 
 def send_notification_email(entries_with_drafts: list) -> None:
