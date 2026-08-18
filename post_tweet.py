@@ -85,10 +85,13 @@ def generate_tweet_draft(title: str, link: str) -> str:
         resp = client.chat.completions.create(
             model="openai/gpt-oss-120b",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=200,
+            max_tokens=1024,
             temperature=0.7,
+            reasoning_effort="low",
         )
         body = resp.choices[0].message.content.strip()
+        if not body:
+            raise ValueError("Groqから空の回答が返されました(reasoningのみで本文なし)")
         # 万一長すぎた場合の保険
         if len(body) > 100:
             body = body[:97] + "..."
