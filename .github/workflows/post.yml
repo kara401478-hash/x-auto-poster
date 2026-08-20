@@ -2,8 +2,8 @@ name: Blog Update Notifier
 
 on:
   schedule:
-    # 毎日 21:00 JST (12:00 UTC) に実行
-    - cron: "0 12 * * *"
+    # 毎日 10:00 JST (12:00 UTC) に実行
+    - cron: "0 1 * * *"
   workflow_dispatch: {} # 手動実行用ボタン
 
 permissions:
